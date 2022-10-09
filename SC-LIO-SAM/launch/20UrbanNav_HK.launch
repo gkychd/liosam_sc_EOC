@@ -8,13 +8,6 @@
     <!--- LOAM -->
     <include file="$(find lio_sam)/launch/include/module_loam.launch" />
 
-    <!--- efficient online segmentation -->
-    <node name="efficient_online_segmentation" pkg="$(arg project)" 
-          type="efficient_online_segmentation_node" output="screen">
-    <rosparam command="load" 
-        file="$(find lio_sam)/launch/segmentation_params.yaml"/>
-    </node>
-
     <!--- Robot State TF -->
     <include file="$(find lio_sam)/launch/include/module_robot_state_publisher.launch" />
 

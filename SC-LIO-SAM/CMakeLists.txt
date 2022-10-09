@@ -1,11 +1,10 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 2.8.3)
 project(lio_sam)
 
 set(CMAKE_BUILD_TYPE "Release")
 # set(CMAKE_CXX_FLAGS "-std=c++14")
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -g -pthread")
-set(Boost_LIBRARY_DIR /usr/lib/x86_64-linux-gnu/)
 
 find_package(catkin REQUIRED COMPONENTS
   tf
@@ -20,7 +19,6 @@ find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   nav_msgs
   message_generation
-  image_transport
 )
 
 find_package(OpenMP REQUIRED)
@@ -32,6 +30,7 @@ add_message_files(
   DIRECTORY msg
   FILES
   cloud_info.msg
+  FloorCoeffs.msg
 )
 
 generate_messages(
@@ -58,7 +57,6 @@ catkin_package(
 # include directories
 include_directories(
 	include
-  ${PROJECT_SOURCE_DIR}
 	${catkin_INCLUDE_DIRS}
 	${PCL_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
@@ -99,21 +97,3 @@ target_link_libraries(${PROJECT_NAME}_mapOptmization ${catkin_LIBRARIES} ${PCL_L
 # IMU Preintegration
 add_executable(${PROJECT_NAME}_imuPreintegration src/imuPreintegration.cpp)
 target_link_libraries(${PROJECT_NAME}_imuPreintegration ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBRARIES} gtsam)
-
-# Efficient online segmentation
-add_executable(efficient_online_segmentation_node 
-    src/efficient_online_segmentation_node.cpp
-    src/efficient_online_segmentation/efficient_online_segmentation.cpp
-    src/efficient_online_segmentation/smart_sector.cpp
-    src/efficient_online_segmentation/segmentation_utility.cpp
-    src/efficient_online_segmentation/adaptive_ground_plane_estimator.cpp
-)
-
-target_link_libraries(efficient_online_segmentation_node 
-    PUBLIC
-    ${catkin_LIBRARIES} 
-    ${PCL_LIBRARIES} 
-    ${OpenCV_LIBRARIES} 
-    ${EIGEN3_LIBRARIES}
-    ${Boost_LIBRARIES}
-)
