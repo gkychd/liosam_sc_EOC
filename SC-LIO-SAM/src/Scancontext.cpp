@@ -235,11 +235,14 @@ const Eigen::MatrixXd& SCManager::getConstRefRecentSCD(void)
 
 void SCManager::makeAndSaveScancontextAndKeys( pcl::PointCloud<SCPointType> & _scan_down )
 {
+    clock_t sc_start= clock();
     Eigen::MatrixXd sc = makeScancontext(_scan_down); // v1 
     Eigen::MatrixXd ringkey = makeRingkeyFromScancontext( sc );
     Eigen::MatrixXd sectorkey = makeSectorkeyFromScancontext( sc );
     std::vector<float> polarcontext_invkey_vec = eig2stdvec( ringkey );
-
+    clock_t sc_end = clock();
+    float produce_sc_time = (sc_end - sc_start) / CLOCKS_PER_SEC;
+    std::cout << "************produce scan context takes: " << std::setprecision(6) << produce_sc_time * 1000 << "ms" << std::endl;
     polarcontexts_.push_back( sc ); 
     polarcontext_invkeys_.push_back( ringkey );
     polarcontext_vkeys_.push_back( sectorkey );

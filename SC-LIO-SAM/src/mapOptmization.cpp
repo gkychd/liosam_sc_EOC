@@ -144,7 +144,9 @@ public:
     std::vector<PointType> laserCloudOriSurfVec; // surf point holder for parallel computation
     std::vector<PointType> coeffSelSurfVec;
     std::vector<bool> laserCloudOriSurfFlag;
-
+    //这个容器的目的是：局部地图点在每个关键帧处理一开始都要清空，而当前关键帧需要的局部地图点，有很大一部分在上一时刻已经
+    //计算过了（将雷达坐标系下的点转到世界坐标系下），也就是这些点在当前帧不用重复处理，直接通过容器可以加入到当前帧所属的
+    //局部地图中。
     map<int, pair<pcl::PointCloud<PointType>, pcl::PointCloud<PointType>>> laserCloudMapContainer;
     pcl::PointCloud<PointType>::Ptr laserCloudCornerFromMap;
     pcl::PointCloud<PointType>::Ptr laserCloudSurfFromMap;
@@ -230,13 +232,13 @@ public:
         subGPS   = nh.subscribe<nav_msgs::Odometry> (gpsTopic, 200, &mapOptimization::gpsHandler, this, ros::TransportHints().tcpNoDelay());
         subLoop  = nh.subscribe<std_msgs::Float64MultiArray>("lio_loop/loop_closure_detection", 1, &mapOptimization::loopInfoHandler, this, ros::TransportHints().tcpNoDelay());
 
-        pubHistoryKeyFrames   = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/icp_loop_closure_history_cloud", 1);
-        pubIcpKeyFrames       = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/icp_loop_closure_corrected_cloud", 1);
+        pubHistoryKeyFrames   = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/icp_loop_closure_history_cloud", 1);//参与回环检测的候选关键帧的前后各25帧组成的点云  --世界坐标系下
+        pubIcpKeyFrames       = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/icp_loop_closure_corrected_cloud", 1);//参与回环检测的当前关键帧下的点云（世界坐标系下），通过icp得到的Tcp，将这些点云与参考帧的点云对齐
         pubLoopConstraintEdge = nh.advertise<visualization_msgs::MarkerArray>("/lio_sam/mapping/loop_closure_constraints", 1);
 
-        pubRecentKeyFrames    = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/map_local", 1);
-        pubRecentKeyFrame     = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/cloud_registered", 1);
-        pubCloudRegisteredRaw = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/cloud_registered_raw", 1);
+        pubRecentKeyFrames    = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/map_local", 1);//当前帧局部地图点（平面点，经过降采样）--世界坐标系下
+        pubRecentKeyFrame     = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/cloud_registered", 1);//当前帧的平面点和角点（经过降采样）  --世界坐标系下
+        pubCloudRegisteredRaw = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/cloud_registered_raw", 1);//当前帧的所有点（未将采样） --世界坐标系下
 
         const float kSCFilterSize = 0.5; // giseop
         downSizeFilterSC.setLeafSize(kSCFilterSize, kSCFilterSize, kSCFilterSize); // giseop
@@ -415,7 +417,7 @@ public:
 
             publishFrames();
             auto mapTimeEnd = ros::Time::now().toSec();
-            ROS_INFO_STREAM("\033[1;33m" << setw(22) << "map takes" << (mapTimeEnd - mapTimeStart) *  1000 << "ms\033[0m");
+            ROS_INFO_STREAM("\033[1;36m" << setw(22) << "map takes" << (mapTimeEnd - mapTimeStart) *  1000 << "ms\033[0m");
             std::ofstream mapTaketime("/home/gky/桌面/slam_results/map_take_time.csv", std::ios::app);
             mapTaketime << (mapTimeEnd - mapTimeStart) *  1000 <<endl;
         }
@@ -654,7 +656,7 @@ public:
         pcl::PointCloud<PointType>::Ptr prevKeyframeCloud(new pcl::PointCloud<PointType>());
         {
             loopFindNearKeyframes(cureKeyframeCloud, loopKeyCur, 0);
-            loopFindNearKeyframes(prevKeyframeCloud, loopKeyPre, historyKeyframeSearchNum);
+            loopFindNearKeyframes(prevKeyframeCloud, loopKeyPre, historyKeyframeSearchNum);//前后各25帧
             if (cureKeyframeCloud->size() < 300 || prevKeyframeCloud->size() < 1000)
                 return;
             if (pubHistoryKeyFrames.getNumSubscribers() != 0)
@@ -694,9 +696,9 @@ public:
         float x, y, z, roll, pitch, yaw;
         Eigen::Affine3f correctionLidarFrame;
         correctionLidarFrame = icp.getFinalTransformation();
-        // transform from world origin to wrong pose
+        // transform from world origin to wrong pose Twc
         Eigen::Affine3f tWrong = pclPointToAffine3f(copy_cloudKeyPoses6D->points[loopKeyCur]);
-        // transform from world origin to corrected pose
+        // transform from world origin to corrected pose Twp = Twc * Tcp
         Eigen::Affine3f tCorrect = correctionLidarFrame * tWrong;// pre-multiplying -> successive rotation about a fixed frame
         pcl::getTranslationAndEulerAngles (tCorrect, x, y, z, roll, pitch, yaw);
         gtsam::Pose3 poseFrom = Pose3(Rot3::RzRyRx(roll, pitch, yaw), Point3(x, y, z));
@@ -1026,11 +1028,13 @@ public:
 
     void updateInitialGuess()
     {
+        //全局第一帧时，此时transformTobeMapped的rpy xyz都为0
         // save current transformation before any processing
         incrementalOdometryAffineFront = trans2Affine3f(transformTobeMapped);
 
         static Eigen::Affine3f lastImuTransformation;
-        // initialization
+        // initialization 当为全局第一帧时，位姿的初值采用imu的roll、pitch（根据重力对齐是可观的），yaw（还是不可观，可用可不用）
+        // 位置xyz设置为0，表示初始帧坐标系的原点与世界坐标系的原点重合
         if (cloudKeyPoses3D->points.empty())
         {
             transformTobeMapped[0] = cloudInfo.imuRollInit;
@@ -1617,6 +1621,12 @@ public:
 
     void addOdomFactor()
     {
+        /*当全局第一帧到来时，经过updateInitialGuess()函数的初始化处理后，由于cloudKeyPoses3D为空，其他函数都不处理，然后进入
+            该函数，在因子图优化的头，加入先验因子。其值为transformTobeMapped，就是updateInitialGuess()函数处理时的位置，为与
+            雷达帧时刻对应的imu时刻的roll、pitch、（yaw或0）、0、0、0
+            分析其先验因子的协方差，roll、pitch处的方差较小，表示信任程度较大，yaw处的方差较大，表示信任程度一般，而xyz处方差很大
+            表示信任程度很低，因此xyz处的位姿十分依赖于GPS的数据将其拉正。
+        */
         if (cloudKeyPoses3D->points.empty())
         {
             noiseModel::Diagonal::shared_ptr priorNoise = noiseModel::Diagonal::Variances((Vector(6) << 1e-2, 1e-2, M_PI*M_PI, 1e8, 1e8, 1e8).finished()); // rad*rad, meter*meter
@@ -1727,7 +1737,7 @@ public:
         {
             int indexFrom = loopIndexQueue[i].first;
             int indexTo = loopIndexQueue[i].second;
-            gtsam::Pose3 poseBetween = loopPoseQueue[i];
+            gtsam::Pose3 poseBetween = loopPoseQueue[i];//残差 ：当前帧位姿Twc * 通过icp匹配得到的矫正位姿Tcp - 候选关键帧位姿Twp
             // gtsam::noiseModel::Diagonal::shared_ptr noiseBetween = loopNoiseQueue[i]; // original 
             auto noiseBetween = loopNoiseQueue[i]; // giseop for polymorhpism // shared_ptr<gtsam::noiseModel::Base>, typedef noiseModel::Base::shared_ptr gtsam::SharedNoiseModel
             gtSAMgraph.add(BetweenFactor<Pose3>(indexFrom, indexTo, poseBetween, noiseBetween));
@@ -1835,7 +1845,7 @@ public:
 
         if( sc_input_type == SCInputType::SINGLE_SCAN_FULL ) {
             pcl::PointCloud<PointType>::Ptr thisRawCloudKeyFrame(new pcl::PointCloud<PointType>());
-            pcl::copyPointCloud(*laserCloudRawDS,  *thisRawCloudKeyFrame);
+            pcl::copyPointCloud(*laserCloudRawDS,  *thisRawCloudKeyFrame);//当前帧降采样后的所有点
             scManager.makeAndSaveScancontextAndKeys(*thisRawCloudKeyFrame);
         }  
         else if (sc_input_type == SCInputType::SINGLE_SCAN_FEAT) { 
@@ -2007,7 +2017,7 @@ public:
         publishCloud(&pubKeyPoses, cloudKeyPoses3D, timeLaserInfoStamp, odometryFrame);
         // Publish surrounding key frames
         publishCloud(&pubRecentKeyFrames, laserCloudSurfFromMapDS, timeLaserInfoStamp, odometryFrame);
-        ROS_INFO_STREAM("上一帧的局部地图点云数量为: \033[1;33m" << laserCloudSurfFromMapDS->size() << "\033[0m");
+        ROS_INFO_STREAM("上一帧的局部地图点云数量为: \033[1;34m" << laserCloudSurfFromMapDS->size() << "\033[0m");
 
         // publish registered key frame
         if (pubRecentKeyFrame.getNumSubscribers() != 0)

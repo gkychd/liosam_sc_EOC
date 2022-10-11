@@ -94,7 +94,7 @@ public:
         publishFeatureCloud();
 
         auto featureTimeEnd = ros::Time::now().toSec();
-        ROS_INFO_STREAM("\033[1;32m" << setw(22) << "featureExtraction takes" << (featureTimeEnd - featureTimeStart) * 1000 << "ms\033[0m");
+        ROS_INFO_STREAM("\033[1;35m" << setw(22) << "featureExtraction takes" << (featureTimeEnd - featureTimeStart) * 1000 << "ms\033[0m");
         std::ofstream featureTaketime("/home/gky/桌面/slam_results/feature_take_time.csv", std::ios::app);
         featureTaketime << (featureTimeEnd - featureTimeStart) * 1000 <<endl;
     }

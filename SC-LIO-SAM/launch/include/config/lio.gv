@@ -1,0 +1,17 @@
+digraph G {
+node [shape=box];
+"base_link" [label="base_link"];
+"chassis_link" [label="chassis_link"];
+"imu_link" [label="imu_link"];
+"navsat_link" [label="navsat_link"];
+"velodyne" [label="velodyne"];
+node [shape=ellipse, color=blue, fontcolor=blue];
+"base_link" -> "base_link_joint" [label="xyz: 0 0 0 \nrpy: 0 -0 0"]
+"base_link_joint" -> "chassis_link"
+"chassis_link" -> "imu_joint" [label="xyz: 0 0 0 \nrpy: 0 -0 0"]
+"imu_joint" -> "imu_link"
+"chassis_link" -> "navsat_joint" [label="xyz: 0 0 0 \nrpy: 0 -0 0"]
+"navsat_joint" -> "navsat_link"
+"chassis_link" -> "velodyne_joint" [label="xyz: 0 0 0 \nrpy: 0 -0 0"]
+"velodyne_joint" -> "velodyne"
+}
