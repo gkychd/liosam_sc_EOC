@@ -12,7 +12,7 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
-#include "segmentation_utility.h"
+#include "efficient_online_segmentation.h"
 
 /**
  * @brief <Future TODO> This class is designed to estimate ground plane 

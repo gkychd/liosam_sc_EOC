@@ -53,6 +53,10 @@
 #include <mutex>
 #include <sstream>
 
+//plane***************************
+//#include "src/efficient_online_segmentation/efficient_online_segmentation.h"
+//****************************
+
 using namespace std;
 
 typedef std::numeric_limits< double > dbl;
@@ -152,6 +156,40 @@ public:
     float globalMapVisualizationPoseDensity;
     float globalMapVisualizationLeafSize;
 
+    std::string pub_cloud_topic;
+    std::string pub_rangeimage_topic;
+    std::string pub_extractedlines_topic;
+
+    std::string base_link_frame_id = "base_link";   // default value.
+    std::string sensor_frame_id = "velodyne";       // default value.
+
+    bool LoadAndConvertDegToRad(::ros::NodeHandle& nh, 
+        const std::string& name, float& variable)
+    { 
+        const float deg2rad = 1.0/180.*M_PI;
+        if (nh.hasParam(name)) {
+            float value;
+            nh.getParam(name, value);
+            variable = value * deg2rad;
+            return true;
+        }
+        return false;
+    }
+
+    bool LoadAndConvertDegToSlope(::ros::NodeHandle& nh, 
+        const std::string& name, float& variable)
+    {
+        const float deg2rad = 1.0/180.*M_PI;
+        if (nh.hasParam(name)) {
+            float value;
+            nh.getParam(name, value);
+            variable = std::tan(value * deg2rad);
+            return true;
+        }
+        return false;
+    }
+    //*******************************
+
     ParamServer()
     {
         nh.param<std::string>("/robot_id", robot_id, "roboat");
@@ -247,6 +285,13 @@ public:
         nh.param<float>("lio_sam/globalMapVisualizationPoseDensity", globalMapVisualizationPoseDensity, 10.0);
         nh.param<float>("lio_sam/globalMapVisualizationLeafSize", globalMapVisualizationLeafSize, 1.0);
 
+        //plane****************************************************************************************************
+        nh.param<std::string>("pub_cloud_topic", pub_cloud_topic, "/EOS_segmted_cloud");
+        nh.param<std::string>("pub_rangeimage_topic", pub_rangeimage_topic, "/EOS_range_image");
+        nh.param<std::string>("pub_extractedlines_topic", pub_extractedlines_topic, "/EOS_extracted_lines");
+        nh.param<std::string>("base_link_frame_id", base_link_frame_id, base_link_frame_id);
+        nh.param<std::string>("sensor_frame_id", sensor_frame_id, sensor_frame_id);
+        
         usleep(100);
     }
 

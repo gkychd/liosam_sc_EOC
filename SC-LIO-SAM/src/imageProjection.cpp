@@ -1,6 +1,7 @@
 #include "utility.h"
 #include "lio_sam/cloud_info.h"
-
+#include "src/efficient_online_segmentation/segmentation_utility.h"
+/*
 struct VelodynePointXYZIRT
 {
     PCL_ADD_POINT4D
@@ -13,6 +14,7 @@ POINT_CLOUD_REGISTER_POINT_STRUCT (VelodynePointXYZIRT,
     (float, x, x) (float, y, y) (float, z, z) (float, intensity, intensity)
     (uint16_t, ring, ring) (float, time, time)
 )
+*/
 
 struct OusterPointXYZIRT {
     PCL_ADD_POINT4D;
@@ -44,7 +46,7 @@ struct MulranPointXYZIRT { // from the file player's topic https://github.com/ir
  )
 
 // Use the Velodyne point format as a common representation
-using PointXYZIRT = VelodynePointXYZIRT;
+//using PointXYZIRT = VelodynePointXYZIRT;
 
 const int queueLength = 2000;
 

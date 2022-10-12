@@ -39,8 +39,8 @@ std::string sensor_frame_id = "velodyne";       // default value.
 // System variables.
 SegmentationParams params;
 EfficientOnlineSegmentation efficient_sgmtt_;
-pcl::PointCloud<pcl::PointXYZI>::Ptr common_original_cloud_;
-pcl::PointCloud<PointXYZIRT>::Ptr custom_original_cloud_;
+//pcl::PointCloud<pcl::PointXYZI>::Ptr common_original_cloud_;//plane
+pcl::PointCloud<PointXYZIRT>::Ptr custom_original_cloud_;//plane
 //地面点
 pcl::PointCloud<pcl::PointXYZI>::Ptr ground_points;
 
@@ -111,8 +111,9 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& msg)
 {
     // check cloud msg fields.
     static bool need_check_fields = true;
-    static bool ring_field_exists = false;
+    static bool ring_field_exists = true;
     static bool time_field_exists = false;
+    /*
     if (need_check_fields) {
         for (auto& field : msg->fields)
         {
@@ -130,6 +131,7 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& msg)
             }
 
         }
+        
         if (!ring_field_exists) {
             std::cout << "########## Could not found `ring` field. " << std::endl;
         }
@@ -137,7 +139,7 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& msg)
             std::cout << "########## Could not found `time` field. " << std::endl;
         }
         need_check_fields = false;
-    }
+    }*/
 
     clock_t time_start = clock();
     
@@ -167,6 +169,7 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& msg)
     std::cout << "ground_points.size() = " << ground_points->size() << std::endl;
     //计算平面法向量*************************** 平均花费时长约为1.7ms
     clock_t time_plane_vector_start = clock();
+
 	Eigen::Vector4f zx;//中心 其次坐标 第4维是1
 	pcl::compute3DCentroid(*ground_points, zx); //xyz1
     std::cout << "centor point: " << "(" << zx(0) << ", " << zx(1) << ", " << zx(2) << ", " << zx(3) <<  ")" << std::endl;

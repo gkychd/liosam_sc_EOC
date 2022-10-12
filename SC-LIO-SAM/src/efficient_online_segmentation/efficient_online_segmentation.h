@@ -5,6 +5,9 @@
 #ifndef EFFICIENT_ONLINE_SEGMENTATION_H_
 #define EFFICIENT_ONLINE_SEGMENTATION_H_
 
+#include <cmath>
+#include <string>
+
 #include <vector>
 #include <array>
 
@@ -16,8 +19,8 @@
 
 #include <opencv2/core/core.hpp> // only for visualization.
 
-#include "segmentation_utility.h"
 #include "smart_sector.h"
+#include "segmentation_utility.h"
 
 class EfficientOnlineSegmentation {
   public:

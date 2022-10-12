@@ -91,29 +91,33 @@ target_link_libraries(${PROJECT_NAME}_featureExtraction ${catkin_LIBRARIES} ${PC
 add_executable(${PROJECT_NAME}_mapOptmization 
   src/mapOptmization.cpp
   src/Scancontext.cpp
+  src/efficient_online_segmentation/efficient_online_segmentation.cpp
+  src/efficient_online_segmentation/smart_sector.cpp
+  src/efficient_online_segmentation/segmentation_utility.cpp
+  src/efficient_online_segmentation/adaptive_ground_plane_estimator.cpp
 )
 add_dependencies(${PROJECT_NAME}_mapOptmization ${catkin_EXPORTED_TARGETS} ${PROJECT_NAME}_generate_messages_cpp)
 target_compile_options(${PROJECT_NAME}_mapOptmization PRIVATE ${OpenMP_CXX_FLAGS})
-target_link_libraries(${PROJECT_NAME}_mapOptmization ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBRARIES} ${OpenMP_CXX_FLAGS} gtsam)
+target_link_libraries(${PROJECT_NAME}_mapOptmization PUBLIC ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBRARIES} ${OpenMP_CXX_FLAGS} ${EIGEN3_LIBRARIES} ${Boost_LIBRARIES} gtsam)
 
 # IMU Preintegration
 add_executable(${PROJECT_NAME}_imuPreintegration src/imuPreintegration.cpp)
 target_link_libraries(${PROJECT_NAME}_imuPreintegration ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBRARIES} gtsam)
 
 # Efficient online segmentation
-add_executable(efficient_online_segmentation_node 
-    src/efficient_online_segmentation_node.cpp
-    src/efficient_online_segmentation/efficient_online_segmentation.cpp
-    src/efficient_online_segmentation/smart_sector.cpp
-    src/efficient_online_segmentation/segmentation_utility.cpp
-    src/efficient_online_segmentation/adaptive_ground_plane_estimator.cpp
-)
-
-target_link_libraries(efficient_online_segmentation_node 
-    PUBLIC
-    ${catkin_LIBRARIES} 
-    ${PCL_LIBRARIES} 
-    ${OpenCV_LIBRARIES} 
-    ${EIGEN3_LIBRARIES}
-    ${Boost_LIBRARIES}
-)
+#add_executable(efficient_online_segmentation_node 
+    #src/efficient_online_segmentation_node.cpp
+    #src/efficient_online_segmentation/efficient_online_segmentation.cpp
+    #src/efficient_online_segmentation/smart_sector.cpp
+    #src/efficient_online_segmentation/segmentation_utility.cpp
+    #src/efficient_online_segmentation/adaptive_ground_plane_estimator.cpp
+#)
+#
+#target_link_libraries(efficient_online_segmentation_node 
+    #PUBLIC
+    #${catkin_LIBRARIES} 
+    #${PCL_LIBRARIES} 
+    #${OpenCV_LIBRARIES} 
+    #${EIGEN3_LIBRARIES}
+    #${Boost_LIBRARIES}
+#)
