@@ -104,6 +104,8 @@ target_link_libraries(${PROJECT_NAME}_mapOptmization PUBLIC ${catkin_LIBRARIES} 
 add_executable(${PROJECT_NAME}_imuPreintegration src/imuPreintegration.cpp)
 target_link_libraries(${PROJECT_NAME}_imuPreintegration ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBRARIES} gtsam)
 
+add_executable(${PROJECT_NAME}_dataConvert src/dataConvert.cpp)
+target_link_libraries(${PROJECT_NAME}_dataConvert ${catkin_LIBRARIES})
 # Efficient online segmentation
 #add_executable(efficient_online_segmentation_node 
     #src/efficient_online_segmentation_node.cpp

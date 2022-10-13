@@ -60,6 +60,7 @@ private:
     ros::Subscriber subLaserCloud;
     ros::Publisher  pubLaserCloud;
     
+    //ros::Publisher pubImu2;
     ros::Publisher pubExtractedCloud;
     ros::Publisher pubLaserCloudInfo;
 
@@ -110,6 +111,7 @@ public:
         subOdom       = nh.subscribe<nav_msgs::Odometry>(odomTopic+"_incremental", 2000, &ImageProjection::odometryHandler, this, ros::TransportHints().tcpNoDelay());
         subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>(pointCloudTopic, 2, &ImageProjection::cloudHandler, this, ros::TransportHints().tcpNoDelay());
 
+        //pubImu2 = nh.advertise<sensor_msgs::Imu>("imu_correct", 1);
         pubExtractedCloud = nh.advertise<sensor_msgs::PointCloud2> ("lio_sam/deskew/cloud_deskewed", 1);
         pubLaserCloudInfo = nh.advertise<lio_sam::cloud_info> ("lio_sam/deskew/cloud_info", 1);
 
@@ -162,8 +164,12 @@ public:
 
     void imuHandler(const sensor_msgs::Imu::ConstPtr& imuMsg)
     {
+        /*
+        sensor_msgs::Imu correct_imu = *imuMsg;
+        correct_imu.header.frame_id = "base_link";
+        pubImu2.publish(correct_imu);
+        */
         sensor_msgs::Imu thisImu = imuConverter(*imuMsg);
-
         std::lock_guard<std::mutex> lock1(imuLock);
         imuQueue.push_back(thisImu);
 
