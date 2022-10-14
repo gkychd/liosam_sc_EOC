@@ -286,7 +286,7 @@ public:
 
         pubKeyPoses                 = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/trajectory", 1);
         pubLaserCloudSurround       = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/map_global", 1);
-        pubLaserOdometryGlobal      = nh.advertise<nav_msgs::Odometry> ("lio_sam/mapping/odometry", 1);
+        pubLaserOdometryGlobal      = nh.advertise<nav_msgs::Odometry> ("lio_sam/mapping/odometry", 1);//图优化后的全局位姿
         pubLaserOdometryIncremental = nh.advertise<nav_msgs::Odometry> ("lio_sam/mapping/odometry_incremental", 1);
         pubPath                     = nh.advertise<nav_msgs::Path>("lio_sam/mapping/path", 1);
 
@@ -726,6 +726,29 @@ public:
     void gpsHandler(const nav_msgs::Odometry::ConstPtr& gpsMsg)
     {
         gpsQueue.push_back(*gpsMsg);
+        Eigen::Matrix3d base_R_gps;
+        Eigen::Quaterniond base_q_gps;
+        Eigen::Vector3d base_t_gps;
+        base_q_gps.x() = (*gpsMsg).pose.pose.orientation.x;
+        base_q_gps.y() = (*gpsMsg).pose.pose.orientation.y;
+        base_q_gps.z() = (*gpsMsg).pose.pose.orientation.z;
+        base_q_gps.w() = (*gpsMsg).pose.pose.orientation.w;
+        base_t_gps(0) = (*gpsMsg).pose.pose.position.x;
+        base_t_gps(1) = (*gpsMsg).pose.pose.position.y;
+        base_t_gps(2) = (*gpsMsg).pose.pose.position.z;
+        base_R_gps = base_q_gps.normalized().toRotationMatrix();
+
+        std::ofstream outputGPS_tum(savePCDDirectory + "gps_tum.txt",  std::ios::app);
+        std::ofstream outputGPS_kitti(savePCDDirectory + "gps_kitti.txt",  std::ios::app);
+        outputGPS_tum.setf(std::ios::scientific, std::ios::floatfield);
+        outputGPS_tum.precision(12);
+        outputGPS_tum << (*gpsMsg).header.stamp.toSec() << " " << base_t_gps(0) << " " << base_t_gps(1) << " " << base_t_gps(2) << " "
+                       <<  base_q_gps.x() << " " << base_q_gps.y() << " " << base_q_gps.z() << " " << base_q_gps.w() << endl;
+        outputGPS_kitti.setf(std::ios::scientific, std::ios::floatfield);
+        outputGPS_kitti.precision(6);
+        outputGPS_kitti << base_R_gps(0, 0) << " " << base_R_gps(0, 1) << " " << base_R_gps(0, 2) << " " << base_t_gps(0) << " "
+               << base_R_gps(1, 0) << " " << base_R_gps(1, 1) << " " << base_R_gps(1, 2) << " " << base_t_gps(1) << " "
+               << base_R_gps(2, 0) << " " << base_R_gps(2, 1) << " " << base_R_gps(2, 2) << " " << base_t_gps(2) << std::endl;
     }
 
     void pointAssociateToMap(PointType const * const pi, PointType * const po)
@@ -2054,7 +2077,7 @@ public:
 
     void saveKeyFramesAndFactor()
     {
-        if (saveFrame() == false)
+        if (saveFrame() == false)//选择关键帧，若不是关键帧则跳过以下的部分
             return;
 
         // odom factor
@@ -2089,9 +2112,16 @@ public:
 
         isamCurrentEstimate = isam->calculateEstimate();
         //新添加关键帧的时间戳
-        static std::string keyframeTime {savePCDDirectory + "keyframeTime.txt"};
-        static std::fstream timeStream(keyframeTime.c_str(), std::fstream::out);
-        timeStream << simTime <<std::endl;
+        std::ofstream timeStream (savePCDDirectory + "keyframeTime.txt",  std::ios::app);
+        timeStream.setf(std::ios::scientific, std::ios::floatfield);
+        timeStream.precision(12);
+        timeStream << timeLaserInfoCur <<std::endl;
+
+        std::ofstream timeSIMStream (savePCDDirectory + "keyframeSIMTime.txt",  std::ios::app);
+        timeSIMStream.setf(std::ios::scientific, std::ios::floatfield);
+        timeSIMStream.precision(12);
+        timeSIMStream << simTime <<std::endl;
+
         //**********************************************************
 
         latestEstimate = isamCurrentEstimate.at<Pose3>(isamCurrentEstimate.size()-1);

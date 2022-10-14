@@ -64,6 +64,7 @@ private:
     ros::Publisher pubExtractedCloud;
     ros::Publisher pubLaserCloudInfo;
 
+    ros::Subscriber subGPStruth;
     ros::Subscriber subImu;
     std::deque<sensor_msgs::Imu> imuQueue;
 
@@ -107,6 +108,7 @@ public:
     ImageProjection():
     deskewFlag(0)
     {
+        subGPStruth = nh.subscribe<nav_msgs::Odometry>("navsat/odom", 100, &ImageProjection::GPStruthHandler, this, ros::TransportHints().tcpNoDelay());
         subImu        = nh.subscribe<sensor_msgs::Imu>(imuTopic, 2000, &ImageProjection::imuHandler, this, ros::TransportHints().tcpNoDelay());
         subOdom       = nh.subscribe<nav_msgs::Odometry>(odomTopic+"_incremental", 2000, &ImageProjection::odometryHandler, this, ros::TransportHints().tcpNoDelay());
         subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>(pointCloudTopic, 2, &ImageProjection::cloudHandler, this, ros::TransportHints().tcpNoDelay());
@@ -161,6 +163,39 @@ public:
     }
 
     ~ImageProjection(){}
+
+    void GPStruthHandler(const nav_msgs::Odometry::ConstPtr& GPStruthMsg)
+    {
+        Eigen::Matrix3d base_R_gps;
+        Eigen::Quaterniond base_q_gps;
+        Eigen::Vector3d base_t_gps;
+        base_q_gps.x() = (*GPStruthMsg).pose.pose.orientation.x;
+        base_q_gps.y() = (*GPStruthMsg).pose.pose.orientation.y;
+        base_q_gps.z() = (*GPStruthMsg).pose.pose.orientation.z;
+        base_q_gps.w() = (*GPStruthMsg).pose.pose.orientation.w;
+        base_t_gps(0) = (*GPStruthMsg).pose.pose.position.x;
+        base_t_gps(1) = (*GPStruthMsg).pose.pose.position.y;
+        base_t_gps(2) = (*GPStruthMsg).pose.pose.position.z;
+        base_R_gps = base_q_gps.normalized().toRotationMatrix();
+
+        std::ofstream outputGPStime(savePCDDirectory + "gps_time.txt",  std::ios::app);
+        std::ofstream outputGPS_tum(savePCDDirectory + "gps_truth_tum.txt",  std::ios::app);
+        std::ofstream outputGPS_kitti(savePCDDirectory + "gps_truth_kitti.txt",  std::ios::app);
+        outputGPStime.setf(std::ios::scientific, std::ios::floatfield);
+        outputGPStime.precision(12);
+        outputGPStime << (*GPStruthMsg).header.stamp.toSec() << std::endl;
+
+        outputGPS_tum.setf(std::ios::scientific, std::ios::floatfield);
+        outputGPS_tum.precision(12);
+        outputGPS_tum << (*GPStruthMsg).header.stamp.toSec() << " " << base_t_gps(0) << " " << base_t_gps(1) << " " << base_t_gps(2) << " "
+                       <<  base_q_gps.x() << " " << base_q_gps.y() << " " << base_q_gps.z() << " " << base_q_gps.w() << endl;
+
+        outputGPS_kitti.setf(std::ios::scientific, std::ios::floatfield);
+        outputGPS_kitti.precision(6);
+        outputGPS_kitti << base_R_gps(0, 0) << " " << base_R_gps(0, 1) << " " << base_R_gps(0, 2) << " " << base_t_gps(0) << " "
+               << base_R_gps(1, 0) << " " << base_R_gps(1, 1) << " " << base_R_gps(1, 2) << " " << base_t_gps(1) << " "
+               << base_R_gps(2, 0) << " " << base_R_gps(2, 1) << " " << base_R_gps(2, 2) << " " << base_t_gps(2) << std::endl;
+    }
 
     void imuHandler(const sensor_msgs::Imu::ConstPtr& imuMsg)
     {
