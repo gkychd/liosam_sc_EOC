@@ -26,6 +26,10 @@
 #include <pcl_ros/point_cloud.h>
 #include <opencv2/core/core.hpp>
 
+//平面约束需要的头文件
+#include <gtsam/slam/OrientedPlane3Factor.h>
+#include <gtsam/geometry/OrientedPlane3.h>
+
 #include <visualization_msgs/Marker.h>
 #include <visualization_msgs/MarkerArray.h>
 //计算平面法向量部分代码而添加的
@@ -42,6 +46,7 @@ using symbol_shorthand::X; // Pose3 (x,y,z,r,p,y)
 using symbol_shorthand::V; // Vel   (xdot,ydot,zdot)
 using symbol_shorthand::B; // Bias  (ax,ay,az,gx,gy,gz)
 using symbol_shorthand::G; // GPS pose
+using symbol_shorthand::P; //Plane (x,y,z,d) OrientedPlane3
 
 void saveOptimizedVerticesKITTIformat(gtsam::Values _estimates, std::string _filename)
 {
@@ -126,6 +131,8 @@ public:
     ros::Publisher pubRecentKeyFrame;
     ros::Publisher pubCloudRegisteredRaw;
     ros::Publisher pubLoopConstraintEdge;
+    //for plane
+    ros::Publisher pubRecentPlanePoints;
 
     ros::Subscriber subCloud;
     ros::Subscriber subGPS;
@@ -136,15 +143,26 @@ public:
 
     vector<pcl::PointCloud<PointType>::Ptr> cornerCloudKeyFrames;
     vector<pcl::PointCloud<PointType>::Ptr> surfCloudKeyFrames;
+
+    //for plane
+    std::deque<Eigen::Vector4d> planeCurrentQueue;
+    std::deque<Eigen::Vector4d> planeSubmapQueue;
+
+    vector<pcl::PointCloud<PointType>::Ptr> planeCloudKeyFrames;
     
-    pcl::PointCloud<PointType>::Ptr cloudKeyPoses3D;
+    pcl::PointCloud<PointXYZIRT>::Ptr cloudKeyPoses3D;
     pcl::PointCloud<PointTypePose>::Ptr cloudKeyPoses6D;
-    pcl::PointCloud<PointType>::Ptr copy_cloudKeyPoses3D;
-    pcl::PointCloud<PointType>::Ptr copy_cloudKeyPoses2D; // giseop 
+    pcl::PointCloud<PointXYZIRT>::Ptr copy_cloudKeyPoses3D;
+    pcl::PointCloud<PointXYZIRT>::Ptr copy_cloudKeyPoses2D; // giseop 
     pcl::PointCloud<PointTypePose>::Ptr copy_cloudKeyPoses6D;
 
     pcl::PointCloud<PointType>::Ptr laserCloudRaw; // giseop
     pcl::PointCloud<PointType>::Ptr laserCloudRawDS; // giseop
+
+    float dectectPlaneCounts;
+    int plane_Index = 0;
+    bool flagForPlaneExtract;//该flag为true表示该关键帧进入了平面点提取  作标记用 用来得到局部地面点（世界系下）
+    bool flagForSubPlane;  //该flag为true表示所提取的局部地图帧中有提取过地面点的帧，为false表示没有，则不进行计算局部地图法向量操作
     //plane*******************************************************************************
 
     // Ros tools.
@@ -154,12 +172,12 @@ public:
     ros::Publisher transformed_cloud_publisher;
 
     EfficientOnlineSegmentation efficient_sgmtt_;
-    pcl::PointCloud<pcl::PointXYZI>::Ptr common_original_cloud_;//plane
+    pcl::PointCloud<PointType>::Ptr common_original_cloud_;//plane
     pcl::PointCloud<PointXYZIRT>::Ptr custom_original_cloud_;//plane
 
     std::vector<int> labels_;
 
-    pcl::PointCloud<pcl::PointXYZI>::Ptr ground_points;
+    pcl::PointCloud<PointType>::Ptr ground_points;
 
 
     //******************************************************************************
@@ -188,18 +206,28 @@ public:
     pcl::PointCloud<PointType>::Ptr laserCloudCornerFromMapDS;
     pcl::PointCloud<PointType>::Ptr laserCloudSurfFromMapDS;
 
+    //局部地图平面相关
+    map<int, pcl::PointCloud<PointType>> laserCloudPlaneMapContainer;
+    pcl::PointCloud<PointType>::Ptr laserCloudPlaneFromMap;
+    pcl::PointCloud<PointType>::Ptr laserCloudPlaneFromMapDS;
+    pcl::KdTreeFLANN<PointXYZIRT>::Ptr kdtreeSurroundingKeyPosesForPlane;
+
     pcl::KdTreeFLANN<PointType>::Ptr kdtreeCornerFromMap;
     pcl::KdTreeFLANN<PointType>::Ptr kdtreeSurfFromMap;
 
-    pcl::KdTreeFLANN<PointType>::Ptr kdtreeSurroundingKeyPoses;
-    pcl::KdTreeFLANN<PointType>::Ptr kdtreeHistoryKeyPoses;
+    pcl::KdTreeFLANN<PointXYZIRT>::Ptr kdtreeSurroundingKeyPoses;
+    pcl::KdTreeFLANN<PointXYZIRT>::Ptr kdtreeHistoryKeyPoses;
 
     pcl::VoxelGrid<PointType> downSizeFilterSC; // giseop
     pcl::VoxelGrid<PointType> downSizeFilterCorner;
     pcl::VoxelGrid<PointType> downSizeFilterSurf;
     pcl::VoxelGrid<PointType> downSizeFilterICP;
-    pcl::VoxelGrid<PointType> downSizeFilterSurroundingKeyPoses; // for surrounding key poses of scan-to-map optimization
+    pcl::VoxelGrid<PointXYZIRT> downSizeFilterSurroundingKeyPoses; // for surrounding key poses of scan-to-map optimization
     
+    //for plane 
+    pcl::VoxelGrid<PointType> downSizeFilterPlane;
+    pcl::VoxelGrid<PointXYZIRT> downSizeFilterSurroundingKeyPosesForPlane;
+
     ros::Time timeLaserInfoStamp;
     double timeLaserInfoCur;
     double simTime;
@@ -268,7 +296,7 @@ public:
         }
         //plane******************************************************************************
         segmted_cloud_publisher = nh.advertise<sensor_msgs::PointCloud2>
-            (pub_cloud_topic, 1);
+            (pub_cloud_topic, 1);//当前帧地面点和墙面点
         range_image_publisher = nh.advertise<sensor_msgs::Image>
             (pub_rangeimage_topic, 1);
         extracted_lines_publisher = nh.advertise<visualization_msgs::MarkerArray>
@@ -278,14 +306,14 @@ public:
 
         efficient_sgmtt_.ResetParameters(params);
 
-        common_original_cloud_.reset(new pcl::PointCloud<pcl::PointXYZI>());
+        common_original_cloud_.reset(new pcl::PointCloud<PointType>());
         custom_original_cloud_.reset(new pcl::PointCloud<PointXYZIRT>());
-        ground_points.reset(new pcl::PointCloud<pcl::PointXYZI>());
+        ground_points.reset(new pcl::PointCloud<PointType>());
         std::cout << "************************* have reset cloud************************" << std::endl;
         //*****************************************************************************************
 
         pubKeyPoses                 = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/trajectory", 1);
-        pubLaserCloudSurround       = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/map_global", 1);
+        pubLaserCloudSurround       = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/map_global", 1);//全局地图 --世界坐标系下
         pubLaserOdometryGlobal      = nh.advertise<nav_msgs::Odometry> ("lio_sam/mapping/odometry", 1);//图优化后的全局位姿
         pubLaserOdometryIncremental = nh.advertise<nav_msgs::Odometry> ("lio_sam/mapping/odometry_incremental", 1);
         pubPath                     = nh.advertise<nav_msgs::Path>("lio_sam/mapping/path", 1);
@@ -302,6 +330,9 @@ public:
         pubRecentKeyFrame     = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/cloud_registered", 1);//当前帧的平面点和角点（经过降采样）  --世界坐标系下
         pubCloudRegisteredRaw = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/cloud_registered_raw", 1);//当前帧的所有点（未将采样） --世界坐标系下
 
+        //for plane
+        pubRecentPlanePoints  =  nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/plane_local", 1);//当前帧局部地图点（地面点，经过降采样） --世界坐标系下
+
         const float kSCFilterSize = 0.5; // giseop
         downSizeFilterSC.setLeafSize(kSCFilterSize, kSCFilterSize, kSCFilterSize); // giseop
 
@@ -309,7 +340,9 @@ public:
         downSizeFilterSurf.setLeafSize(mappingSurfLeafSize, mappingSurfLeafSize, mappingSurfLeafSize);
         downSizeFilterICP.setLeafSize(mappingSurfLeafSize, mappingSurfLeafSize, mappingSurfLeafSize);
         downSizeFilterSurroundingKeyPoses.setLeafSize(surroundingKeyframeDensity, surroundingKeyframeDensity, surroundingKeyframeDensity); // for surrounding key poses of scan-to-map optimization
-
+        //for plane
+        downSizeFilterPlane.setLeafSize(groundSubmapLeafSize, groundSubmapLeafSize, groundSubmapLeafSize);
+        downSizeFilterSurroundingKeyPosesForPlane.setLeafSize(surroundingKeyframeDensity, surroundingKeyframeDensity, surroundingKeyframeDensity);
         allocateMemory();
 
         pcl::console::setVerbosityLevel(pcl::console::L_ERROR);
@@ -380,14 +413,16 @@ public:
 
     void allocateMemory()
     {
-        cloudKeyPoses3D.reset(new pcl::PointCloud<PointType>());
+        cloudKeyPoses3D.reset(new pcl::PointCloud<PointXYZIRT>());
         cloudKeyPoses6D.reset(new pcl::PointCloud<PointTypePose>());
-        copy_cloudKeyPoses3D.reset(new pcl::PointCloud<PointType>());
-        copy_cloudKeyPoses2D.reset(new pcl::PointCloud<PointType>());
+        copy_cloudKeyPoses3D.reset(new pcl::PointCloud<PointXYZIRT>());
+        copy_cloudKeyPoses2D.reset(new pcl::PointCloud<PointXYZIRT>());
         copy_cloudKeyPoses6D.reset(new pcl::PointCloud<PointTypePose>());
+        //for plane
+        kdtreeSurroundingKeyPosesForPlane.reset(new pcl::KdTreeFLANN<PointXYZIRT>());
 
-        kdtreeSurroundingKeyPoses.reset(new pcl::KdTreeFLANN<PointType>());
-        kdtreeHistoryKeyPoses.reset(new pcl::KdTreeFLANN<PointType>());
+        kdtreeSurroundingKeyPoses.reset(new pcl::KdTreeFLANN<PointXYZIRT>());
+        kdtreeHistoryKeyPoses.reset(new pcl::KdTreeFLANN<PointXYZIRT>());
 
         laserCloudRaw.reset(new pcl::PointCloud<PointType>()); // giseop
         laserCloudRawDS.reset(new pcl::PointCloud<PointType>()); // giseop
@@ -415,12 +450,20 @@ public:
         laserCloudCornerFromMapDS.reset(new pcl::PointCloud<PointType>());
         laserCloudSurfFromMapDS.reset(new pcl::PointCloud<PointType>());
 
+        //for Plane
+        laserCloudPlaneFromMap.reset(new pcl::PointCloud<PointType>());
+        laserCloudPlaneFromMapDS.reset(new pcl::PointCloud<PointType>());
+
         kdtreeCornerFromMap.reset(new pcl::KdTreeFLANN<PointType>());
         kdtreeSurfFromMap.reset(new pcl::KdTreeFLANN<PointType>());
 
         for (int i = 0; i < 6; ++i){
             transformTobeMapped[i] = 0;
         }
+
+        dectectPlaneCounts = 0.0;
+        flagForPlaneExtract = false;
+        flagForSubPlane = false;
 
         matP.setZero();
     }
@@ -506,18 +549,78 @@ public:
             downsampleCurrentScan();
 
             scan2MapOptimization();
+
             //平面点提取 这里设置频率为1Hz
-            if(simTime > 5 && (timeLaserInfoCur - timeLastPlane) > 1.0){
+            if(simTime > 7 && (timeLaserInfoCur - timeLastPlane) > groundExtractProcessInterval && saveFrame() == true)
+            {
+                dectectPlaneCounts += 1.0;
+                std::cout << "simTime: " << simTime << std::endl;
+                flagForPlaneExtract = true;
                 timeLastPlane = timeLaserInfoCur;
                 segmentPlane(msgIn);
-            }
+                extractSubMapforPlane();
 
+                 //****************************for plane****************************
+                // save all the received plane points
+                std::cout << "before add to submap, ground_points nums: " << ground_points->size() << std::endl;
+                pcl::PointCloud<PointType>::Ptr thisPlaneKeyFrame(new pcl::PointCloud<PointType>());
+                pcl::copyPointCloud(*ground_points,  *thisPlaneKeyFrame);
+                //用当前帧地面点的第0个点的intensity来记录该地面帧在全局帧中的索引，用来之后转化点云的坐标系
+                thisPlaneKeyFrame->points[0].intensity = cloudKeyPoses3D->size();
+                // save key frame cloud
+                planeCloudKeyFrames.push_back(thisPlaneKeyFrame);
+                ground_points->clear();
+                //ground_points.reset(new pcl::PointCloud<PointType>());//由于我添加地面点是通过push_back添加的
+                                                                                                                                    //而角点和平面点时通过filter函数覆盖的，因此不用reset
+    
+                //计算平面法向量*************************** 平均花费时长约为1.7ms
+                if(flagForSubPlane == true){
+
+                    std::cout << "before filter, nums of plane points for submap: " << laserCloudPlaneFromMap->size() << std::endl;
+                    downSizeFilterPlane.setInputCloud(laserCloudPlaneFromMap);
+                    downSizeFilterPlane.filter(*laserCloudPlaneFromMapDS);
+                    std::cout << "after filter, nums of plane points for submap: " << laserCloudPlaneFromMapDS->size() << std::endl;
+                    clock_t time_plane_vector_start = clock();
+	                Eigen::Vector4f zx;//中心 齐次坐标 第4维是1
+	                pcl::compute3DCentroid(*laserCloudPlaneFromMapDS, zx); //xyz1
+                    std::cout << "submap centor point: " << "(" << zx(0) << ", " << zx(1) << ", " << zx(2) << ", " << zx(3) <<  ")" << std::endl;
+	                Eigen::Matrix3f xiefancha;
+	                pcl::computeCovarianceMatrixNormalized(*laserCloudPlaneFromMapDS, zx, xiefancha);//计算归一化协方差矩阵
+                    std::cout << "submap CovarianceMatrixNormalized: " << std::endl << xiefancha << std::endl;
+	                //计算特征值和特征向量
+	                Eigen::SelfAdjointEigenSolver<Eigen::Matrix3f> solve(xiefancha, Eigen::ComputeEigenvectors);
+	                Eigen::Vector3f values = solve.eigenvalues();//特征值
+	                Eigen::Matrix3f vectors = solve.eigenvectors();//特征向量 列向量为特征向量 其中第一列为最小特征值对应的特征向量
+                    clock_t time_plane_vector_end = clock();
+                    float time_plane_vector = (float(time_plane_vector_end - time_plane_vector_start))/CLOCKS_PER_SEC;
+                    std::cout << "calculate submap plane vector take: " << time_plane_vector * 1000<< "ms" << std::endl;
+	                //平面的法向量
+	                double V_x = vectors(0, 0);
+	                double V_y = vectors(1, 0);
+	                double V_z = vectors(2, 0);
+                    double x0 = zx(0);
+                    double y0 = zx(1);
+                    double z0 = zx(2);
+                    double d = - (V_x * x0 + V_y * y0 + V_z * z0); 
+                    std::cout << "submap plane normal vector: " << "(" << V_x << ", " << V_y << ", " << V_z << ", " << d << ")" << std::endl;
+                    //*****************************************************************
+                    if(V_z < 0){
+                        Eigen::Vector4d currentPlane;
+                        currentPlane << -V_x, -V_y, -V_z, -d;
+                        planeSubmapQueue.push_back(currentPlane);
+                    }else{
+                        Eigen::Vector4d currentPlane;
+                        currentPlane << V_x, V_y, V_z, d;
+                        planeSubmapQueue.push_back(currentPlane);
+                    }
+                }
+            }
             saveKeyFramesAndFactor();
 
             correctPoses();
-
+            //std::cout << "correctPoses end" << std::endl;
             publishOdometry();
-
+            //std::cout << "publishOdometry end" << std::endl;
             publishFrames();
             auto mapTimeEnd = ros::Time::now().toSec();
             ROS_INFO_STREAM("\033[1;36m" << setw(22) << "map takes" << (mapTimeEnd - mapTimeStart) *  1000 << "ms\033[0m");
@@ -526,7 +629,113 @@ public:
         }
     }
 
-    void segmentPlane(const lio_sam::cloud_infoConstPtr& msgIn){
+    void extractSubMapforPlane()
+    {
+        if (cloudKeyPoses3D->points.empty() == true)
+            return;
+        //必须有过地面点才进行提取局部地图地面点操作
+        
+        extractNearbyForPlane();
+    }
+    void extractNearbyForPlane()
+    {
+        pcl::PointCloud<PointXYZIRT>::Ptr surroundingKeyPosesForPlane(new pcl::PointCloud<PointXYZIRT>());
+        pcl::PointCloud<PointXYZIRT>::Ptr surroundingKeyPosesForPlaneDS(new pcl::PointCloud<PointXYZIRT>());
+        std::vector<int> pointSearchInd;
+        std::vector<float> pointSearchSqDis;
+
+        // extract all the nearby key poses and downsample them
+        kdtreeSurroundingKeyPosesForPlane->setInputCloud(cloudKeyPoses3D); // create kd-tree 搜索到的最近点包含自己
+        kdtreeSurroundingKeyPosesForPlane->radiusSearch(cloudKeyPoses3D->back(), (double)surroundingKeyframeSearchRadiusForPlane, pointSearchInd, pointSearchSqDis);
+        for (int i = 0; i < (int)pointSearchInd.size(); ++i)
+        {
+            //std::cout << "pointSearchInd.size(): "<< pointSearchInd.size() << std::endl;
+            int id = pointSearchInd[i];
+            surroundingKeyPosesForPlane->push_back(cloudKeyPoses3D->points[id]);
+        }
+
+        downSizeFilterSurroundingKeyPosesForPlane.setInputCloud(surroundingKeyPosesForPlane);
+        downSizeFilterSurroundingKeyPosesForPlane.filter(*surroundingKeyPosesForPlaneDS);
+
+        // also extract some latest key frames in case the robot rotates in one position
+        int numPoses = cloudKeyPoses3D->size();
+        for (int i = numPoses-1; i >= 0; --i)
+        {
+            //std::cout << "numPoses: "<< numPoses << std::endl;
+            if (timeLaserInfoCur - cloudKeyPoses6D->points[i].time < 5.0)
+                surroundingKeyPosesForPlaneDS->push_back(cloudKeyPoses3D->points[i]);
+            else
+                break;
+        }
+        extractPlaneCloud(surroundingKeyPosesForPlaneDS);
+    }
+
+    void extractPlaneCloud(pcl::PointCloud<PointXYZIRT>::Ptr cloudToExtract)
+    {
+        laserCloudPlaneFromMap->clear();
+        int noPlaneCount = 0;//过往的帧中没有提取地面点帧的数量
+        int farScanCount = 0;//距离较远的帧的数量
+        std::cout << "surroundingKeyPosesForPlaneDS.size(): " << (int)cloudToExtract->size() << std::endl;
+        for (int i = 0; i < (int)cloudToExtract->size(); ++i)
+        {
+            if (pointDistance(cloudToExtract->points[i], cloudKeyPoses3D->back()) > surroundingKeyframeSearchRadiusForPlane){
+                farScanCount++;
+                continue;
+            }
+
+            int thisKeyInd = (int)cloudToExtract->points[i].ring;
+            if(thisKeyInd == 0){
+                noPlaneCount++;
+                continue;
+            }
+            int thisPlaneInd = thisKeyInd - (int)cloudToExtract->points[i].intensity;
+            thisKeyInd = (int)cloudToExtract->points[i].intensity;
+            std::cout << "********selected key frame id: " << thisKeyInd << "**********" << std::endl;
+            std::cout << "********thisPlaneInd: " << thisPlaneInd << "**********" << std::endl;
+            if (laserCloudPlaneMapContainer.find(thisKeyInd) != laserCloudPlaneMapContainer.end()) 
+            {
+                // transformed cloud available
+                *laserCloudPlaneFromMap += laserCloudPlaneMapContainer[thisKeyInd];
+            } else {
+                {
+                std::cout << "enter transform ground points" << std::endl;
+                // transformed cloud not available
+                std::cout << "planeCloudKeyFrames.size(): " << planeCloudKeyFrames.size() << std::endl;
+                std::cout << "cloudKeyPoses6D->size(): " << cloudKeyPoses6D->size() << std::endl;
+
+                std::cout << "before transform to world, ground points[0] is: " << "(" << (&(planeCloudKeyFrames[thisPlaneInd - 1]->points[0]))->x << ", "
+                                                                                                                                    <<(&(planeCloudKeyFrames[thisPlaneInd - 1]->points[0]))->y << ", "
+                                                                                                                                    <<(&(planeCloudKeyFrames[thisPlaneInd - 1]->points[0]))->z << ")"<< std::endl;
+                std::cout << "cloudKeyPoses6D->points[thisKeyInd]: " << "(" << (&cloudKeyPoses6D->points[thisKeyInd])->x << ", "
+                                                                                                                                << (&cloudKeyPoses6D->points[thisKeyInd])->y << ", "
+                                                                                                                                << (&cloudKeyPoses6D->points[thisKeyInd])->z << ", "
+                                                                                                                                << (&cloudKeyPoses6D->points[thisKeyInd])->roll << ", "
+                                                                                                                                << (&cloudKeyPoses6D->points[thisKeyInd])->pitch << ", "
+                                                                                                                                << (&cloudKeyPoses6D->points[thisKeyInd])->yaw << ")" << std::endl;            
+                std::cout << "(planeCloudKeyFrames[thisPlaneInd - 1])->size(): " << (planeCloudKeyFrames[thisPlaneInd - 1])->size() << std::endl;     
+                }                                                                                                    
+                pcl::PointCloud<PointType> laserCloudPlaneTemp = *transformPointCloud(planeCloudKeyFrames[thisPlaneInd - 1],  &cloudKeyPoses6D->points[thisKeyInd]);
+                std::cout << "after transform to world, ground points[0] is: " << "(" << laserCloudPlaneTemp.points[0].x << ", " 
+                                                                                                                                << laserCloudPlaneTemp.points[0].y << ", "
+                                                                                                                                << laserCloudPlaneTemp.points[0].z << ")" << std::endl;
+                *laserCloudPlaneFromMap += laserCloudPlaneTemp;
+                laserCloudPlaneMapContainer[thisKeyInd] = laserCloudPlaneTemp;
+            }
+        }
+        std::cout <<"noPlaneCount: " << noPlaneCount << std::endl;
+        std::cout <<"farScanCount: " << farScanCount << std::endl;
+        if(noPlaneCount == ((int)cloudToExtract->size() - farScanCount)){
+            flagForSubPlane = false;
+        }else{
+            flagForSubPlane = true;
+        }
+
+        if (laserCloudPlaneMapContainer.size() > 1000)
+            laserCloudPlaneMapContainer.clear();
+    }
+
+    void segmentPlane(const lio_sam::cloud_infoConstPtr& msgIn)
+    {
             // check cloud msg fields.
         static bool need_check_fields = true;
         static bool ring_field_exists = false;
@@ -559,7 +768,6 @@ public:
 
         clock_t time_start = clock();
     
-
         // Run ground-segmentation algorithm.
         if (ring_field_exists) {
             pcl::fromROSMsg(msgIn->cloud_deskewed, *custom_original_cloud_); 
@@ -577,6 +785,7 @@ public:
                 ground_points->push_back(common_original_cloud_->points[i]);
             }
         }
+
         /*
         for(int i = 10000; i < 10030; ++i){
             std::cout << "cout 20 ground points for debug: "<< ground_points->points[i] << std::endl;
@@ -584,8 +793,9 @@ public:
         */
         std::cout << "ground_points.size() = " << ground_points->size() << std::endl;
         //计算平面法向量*************************** 平均花费时长约为1.7ms
+        {
         clock_t time_plane_vector_start = clock();
-	    Eigen::Vector4f zx;//中心 其次坐标 第4维是1
+	    Eigen::Vector4f zx;//中心 齐次坐标 第4维是1
 	    pcl::compute3DCentroid(*ground_points, zx); //xyz1
         std::cout << "centor point: " << "(" << zx(0) << ", " << zx(1) << ", " << zx(2) << ", " << zx(3) <<  ")" << std::endl;
 	    Eigen::Matrix3f xiefancha;
@@ -596,7 +806,7 @@ public:
 	    Eigen::Vector3f values = solve.eigenvalues();//特征值
 	    Eigen::Matrix3f vectors = solve.eigenvectors();//特征向量 列向量为特征向量 其中第一列为最小特征值对应的特征向量
         clock_t time_plane_vector_end = clock();
-        float time_plane_vector = (float(time_plane_vector_end-time_plane_vector_start))/CLOCKS_PER_SEC;
+        float time_plane_vector = (float(time_plane_vector_end - time_plane_vector_start))/CLOCKS_PER_SEC;
         std::cout << "calculate plane vector take: " << time_plane_vector * 1000<< "ms" << std::endl;
 	    //平面的法向量
 	    double V_x = vectors(0, 0);
@@ -607,10 +817,20 @@ public:
         double z0 = zx(2);
         double d = - (V_x * x0 + V_y * y0 + V_z * z0); 
         std::cout << "plane normal vector: " << "(" << V_x << ", " << V_y << ", " << V_z << ", " << d << ")" << std::endl;
+        if(V_z < 0){
+            Eigen::Vector4d currentPlane;
+            currentPlane << -V_x, -V_y, -V_z, -d;
+            planeCurrentQueue.push_back(currentPlane);
+        }else{
+            Eigen::Vector4d currentPlane;
+            currentPlane << V_x, V_y, V_z, d;
+            planeCurrentQueue.push_back(currentPlane);
+        }
 
-        ground_points.reset(new pcl::PointCloud<pcl::PointXYZI>());
+
+        }
         //**************************************************************************
-        // Publish robot tf.
+         // Publish robot tf.
         {
             static tf::StampedTransform tf_msg;
             static tf::TransformBroadcaster tf_broadcaster;
@@ -619,7 +839,7 @@ public:
             tf_msg.child_frame_id_ = sensor_frame_id;
             Eigen::Quaternionf rot_quat(params.kBaseToSensor.rotation());
             Eigen::Vector3f trans = params.kBaseToSensor.translation();
-            tf_msg.setRotation(tf::Quaternion(rot_quat.x(), rot_quat.y(), rot_quat.z(), rot_quat.w()));
+            tf_msg.setRotation(tf::Quaternion(rot_quat.x(), rot_quat.y(), rot_quat.z(), rot_quat.w()));//Tpc p: parent, c: child
             tf_msg.setOrigin(tf::Vector3(trans.x(), trans.y(), trans.z()));
             tf_broadcaster.sendTransform(tf_msg);
         }
@@ -857,11 +1077,24 @@ public:
         pcl::PointCloud<PointType>::Ptr globalSurfCloud(new pcl::PointCloud<PointType>());
         pcl::PointCloud<PointType>::Ptr globalSurfCloudDS(new pcl::PointCloud<PointType>());
         pcl::PointCloud<PointType>::Ptr globalMapCloud(new pcl::PointCloud<PointType>());
+        //for plane
+        pcl::PointCloud<PointType>::Ptr globalPlaneCloud(new pcl::PointCloud<PointType>());
+        pcl::PointCloud<PointType>::Ptr globalPlaneCloudDS(new pcl::PointCloud<PointType>());
+        for(int i = 0; i < (int)planeCloudKeyFrames.size(); i++){
+            //j表示该地面帧在全局中的索引值
+            int j = planeCloudKeyFrames[i]->points[0].intensity;
+            *globalPlaneCloud += *transformPointCloud(planeCloudKeyFrames[i], &cloudKeyPoses6D->points[j]);
+        }
         for (int i = 0; i < (int)cloudKeyPoses3D->size(); i++) {
             *globalCornerCloud += *transformPointCloud(cornerCloudKeyFrames[i],  &cloudKeyPoses6D->points[i]);
             *globalSurfCloud   += *transformPointCloud(surfCloudKeyFrames[i],    &cloudKeyPoses6D->points[i]);
             cout << "\r" << std::flush << "Processing feature cloud " << i << " of " << cloudKeyPoses6D->size() << " ...";
         }
+        
+        //对地面点降采样并保存
+        downSizeFilterPlane.setInputCloud(globalPlaneCloud);
+        downSizeFilterPlane.filter(*globalPlaneCloudDS);
+        pcl::io::savePCDFileASCII(savePCDDirectory + "cloudPlane.pcd", *globalPlaneCloudDS);
         // down-sample and save corner cloud
         downSizeFilterCorner.setInputCloud(globalCornerCloud);
         downSizeFilterCorner.filter(*globalCornerCloudDS);
@@ -886,9 +1119,9 @@ public:
         if (cloudKeyPoses3D->points.empty() == true)
             return;
 
-        pcl::KdTreeFLANN<PointType>::Ptr kdtreeGlobalMap(new pcl::KdTreeFLANN<PointType>());;
-        pcl::PointCloud<PointType>::Ptr globalMapKeyPoses(new pcl::PointCloud<PointType>());
-        pcl::PointCloud<PointType>::Ptr globalMapKeyPosesDS(new pcl::PointCloud<PointType>());
+        pcl::KdTreeFLANN<PointXYZIRT>::Ptr kdtreeGlobalMap(new pcl::KdTreeFLANN<PointXYZIRT>());;
+        pcl::PointCloud<PointXYZIRT>::Ptr globalMapKeyPoses(new pcl::PointCloud<PointXYZIRT>());
+        pcl::PointCloud<PointXYZIRT>::Ptr globalMapKeyPosesDS(new pcl::PointCloud<PointXYZIRT>());
         pcl::PointCloud<PointType>::Ptr globalMapKeyFrames(new pcl::PointCloud<PointType>());
         pcl::PointCloud<PointType>::Ptr globalMapKeyFramesDS(new pcl::PointCloud<PointType>());
 
@@ -904,7 +1137,7 @@ public:
         for (int i = 0; i < (int)pointSearchIndGlobalMap.size(); ++i)
             globalMapKeyPoses->push_back(cloudKeyPoses3D->points[pointSearchIndGlobalMap[i]]);
         // downsample near selected key frames
-        pcl::VoxelGrid<PointType> downSizeFilterGlobalMapKeyPoses; // for global map visualization
+        pcl::VoxelGrid<PointXYZIRT> downSizeFilterGlobalMapKeyPoses; // for global map visualization
         downSizeFilterGlobalMapKeyPoses.setLeafSize(globalMapVisualizationPoseDensity, globalMapVisualizationPoseDensity, globalMapVisualizationPoseDensity); // for global map visualization
         downSizeFilterGlobalMapKeyPoses.setInputCloud(globalMapKeyPoses);
         downSizeFilterGlobalMapKeyPoses.filter(*globalMapKeyPosesDS);
@@ -1414,7 +1647,7 @@ public:
 
     void extractForLoopClosure()
     {
-        pcl::PointCloud<PointType>::Ptr cloudToExtract(new pcl::PointCloud<PointType>());
+        pcl::PointCloud<PointXYZIRT>::Ptr cloudToExtract(new pcl::PointCloud<PointXYZIRT>());
         int numPoses = cloudKeyPoses3D->size();
         for (int i = numPoses-1; i >= 0; --i)
         {
@@ -1429,8 +1662,8 @@ public:
 
     void extractNearby()
     {
-        pcl::PointCloud<PointType>::Ptr surroundingKeyPoses(new pcl::PointCloud<PointType>());
-        pcl::PointCloud<PointType>::Ptr surroundingKeyPosesDS(new pcl::PointCloud<PointType>());
+        pcl::PointCloud<PointXYZIRT>::Ptr surroundingKeyPoses(new pcl::PointCloud<PointXYZIRT>());
+        pcl::PointCloud<PointXYZIRT>::Ptr surroundingKeyPosesDS(new pcl::PointCloud<PointXYZIRT>());
         std::vector<int> pointSearchInd;
         std::vector<float> pointSearchSqDis;
 
@@ -1459,7 +1692,7 @@ public:
         extractCloud(surroundingKeyPosesDS);
     }
 
-    void extractCloud(pcl::PointCloud<PointType>::Ptr cloudToExtract)
+    void extractCloud(pcl::PointCloud<PointXYZIRT>::Ptr cloudToExtract)
     {
         // fuse the map
         laserCloudCornerFromMap->clear();
@@ -1477,6 +1710,8 @@ public:
                 *laserCloudSurfFromMap   += laserCloudMapContainer[thisKeyInd].second;
             } else {
                 // transformed cloud not available
+                //这里为什么直接使用thisKeyInd而不用减1
+                //答：因为intensity是指位姿点聚类中位姿点的数量 - 1
                 pcl::PointCloud<PointType> laserCloudCornerTemp = *transformPointCloud(cornerCloudKeyFrames[thisKeyInd],  &cloudKeyPoses6D->points[thisKeyInd]);
                 pcl::PointCloud<PointType> laserCloudSurfTemp = *transformPointCloud(surfCloudKeyFrames[thisKeyInd],    &cloudKeyPoses6D->points[thisKeyInd]);
                 *laserCloudCornerFromMap += laserCloudCornerTemp;
@@ -1496,7 +1731,7 @@ public:
         laserCloudSurfFromMapDSNum = laserCloudSurfFromMapDS->size();
 
         // clear map cache if too large
-        if (laserCloudMapContainer.size() > 1000)
+        if (laserCloudMapContainer.size() > 1000)//该map容器的作用就是空间换时间，这里清除则时间换空间
             laserCloudMapContainer.clear();
     }
 
@@ -1952,10 +2187,12 @@ public:
         */
         if (cloudKeyPoses3D->points.empty())
         {
-            noiseModel::Diagonal::shared_ptr priorNoise = noiseModel::Diagonal::Variances((Vector(6) << 1e-2, 1e-2, M_PI*M_PI, 1e8, 1e8, 1e8).finished()); // rad*rad, meter*meter
-            gtSAMgraph.add(PriorFactor<Pose3>(0, trans2gtsamPose(transformTobeMapped), priorNoise));
-            initialEstimate.insert(0, trans2gtsamPose(transformTobeMapped));
-
+            std::cout << "add first pose node begin" << std::endl;
+            noiseModel::Diagonal::shared_ptr priorNoise = noiseModel::Diagonal::Variances((Vector(6) << 1e-4, 1e-4, 1e-4, 1e-6, 1e-6, 1e-6).finished()); // rad*rad, meter*meter
+            //noiseModel::Diagonal::shared_ptr priorNoise = noiseModel::Diagonal::Variances((Vector(6) << 1e-2, 1e-2, M_PI*M_PI, 1e8, 1e8, 1e8).finished()); // rad*rad, meter*meter
+            gtSAMgraph.add(PriorFactor<Pose3>(X(0), trans2gtsamPose(transformTobeMapped), priorNoise));
+            initialEstimate.insert(X(0), trans2gtsamPose(transformTobeMapped));
+            std::cout << "add first pose node finished" << std::endl;
             writeVertex(0, trans2gtsamPose(transformTobeMapped));
 
         }else{
@@ -1963,8 +2200,8 @@ public:
             gtsam::Pose3 poseFrom = pclPointTogtsamPose3(cloudKeyPoses6D->points.back());
             gtsam::Pose3 poseTo   = trans2gtsamPose(transformTobeMapped);
             gtsam::Pose3 relPose = poseFrom.between(poseTo);
-            gtSAMgraph.add(BetweenFactor<Pose3>(cloudKeyPoses3D->size()-1, cloudKeyPoses3D->size(), relPose, odometryNoise));
-            initialEstimate.insert(cloudKeyPoses3D->size(), poseTo);
+            gtSAMgraph.add(BetweenFactor<Pose3>(X(cloudKeyPoses3D->size()-1), X(cloudKeyPoses3D->size()), relPose, odometryNoise));
+            initialEstimate.insert(X(cloudKeyPoses3D->size()), poseTo);
 
             writeVertex(cloudKeyPoses3D->size(), poseTo);
             writeEdge({cloudKeyPoses3D->size()-1, cloudKeyPoses3D->size()}, relPose); // giseop
@@ -2042,7 +2279,7 @@ public:
                 gtsam::Vector Vector3(3);
                 Vector3 << max(noise_x, 1.0f), max(noise_y, 1.0f), max(noise_z, 1.0f);
                 noiseModel::Diagonal::shared_ptr gps_noise = noiseModel::Diagonal::Variances(Vector3);
-                gtsam::GPSFactor gps_factor(cloudKeyPoses3D->size(), gtsam::Point3(gps_x, gps_y, gps_z), gps_noise);
+                gtsam::GPSFactor gps_factor(X(cloudKeyPoses3D->size()), gtsam::Point3(gps_x, gps_y, gps_z), gps_noise);
                 gtSAMgraph.add(gps_factor);
 
                 aLoopIsClosed = true;
@@ -2051,6 +2288,50 @@ public:
         }
     }
 
+    void addPlaneFactor()
+    {
+        
+        //当第一次检测地面点时，planeCurrentQueue队列中有一个平面属性，planeSubmapQueue为空
+        if(planeCurrentQueue.empty() || planeSubmapQueue.empty()){
+            return;
+        }
+
+        if(cloudKeyPoses3D->points.empty()){
+            return;
+        }
+        Eigen::Vector4d planeCurrent;
+        Eigen::Vector4d planeSubmap;
+        if(planeSubmapQueue.size() != planeCurrentQueue.size()){
+            planeCurrentQueue.pop_front();
+            planeCurrent = planeCurrentQueue.front();
+            planeSubmap = planeSubmapQueue.front();
+            planeCurrentQueue.pop_front();
+            planeSubmapQueue.pop_front();
+            plane_Index++;
+        }else{
+            planeCurrent = planeCurrentQueue.front();
+            planeSubmap = planeSubmapQueue.front();
+            planeCurrentQueue.pop_front();
+            planeSubmapQueue.pop_front();
+            plane_Index++;
+        }
+        /*
+        if(cloudKeyPoses3D->size() < 50){
+            return;
+        }
+        */
+       
+        OrientedPlane3 Plane3submap(planeSubmap(0), planeSubmap(1), planeSubmap(2), planeSubmap(3));
+        //这里对局部地图地面节点加入先验约束的目的是为了fix该节点，优化时只优化位姿节点
+        noiseModel::Diagonal::shared_ptr PriorModel = noiseModel::Diagonal::Variances(Vector3(1e-4, 1e-4, 1e-4));
+        gtSAMgraph.add(PriorFactor<OrientedPlane3>(P(plane_Index  - 1), Plane3submap, PriorModel));
+        initialEstimate.insert(P(plane_Index  - 1), Plane3submap);
+
+        noiseModel::Diagonal::shared_ptr PlaneModel = noiseModel::Diagonal::Variances(Vector3(groundnoiseXY, groundnoiseXY, groundnoiseZ));
+        OrientedPlane3Factor plane_factor(planeCurrent, PlaneModel, X(cloudKeyPoses3D->size()), P(plane_Index  - 1));
+        gtSAMgraph.add(plane_factor);
+
+    }
     void addLoopFactor()
     {
         if (loopIndexQueue.empty())
@@ -2063,7 +2344,7 @@ public:
             gtsam::Pose3 poseBetween = loopPoseQueue[i];//残差 ：当前帧位姿Twc * 通过icp匹配得到的矫正位姿Tcp - 候选关键帧位姿Twp
             // gtsam::noiseModel::Diagonal::shared_ptr noiseBetween = loopNoiseQueue[i]; // original 
             auto noiseBetween = loopNoiseQueue[i]; // giseop for polymorhpism // shared_ptr<gtsam::noiseModel::Base>, typedef noiseModel::Base::shared_ptr gtsam::SharedNoiseModel
-            gtSAMgraph.add(BetweenFactor<Pose3>(indexFrom, indexTo, poseBetween, noiseBetween));
+            gtSAMgraph.add(BetweenFactor<Pose3>(X(indexFrom), X(indexTo), poseBetween, noiseBetween));
 
             writeEdge({indexFrom, indexTo}, poseBetween); // giseop
         }
@@ -2077,21 +2358,27 @@ public:
 
     void saveKeyFramesAndFactor()
     {
+        
         if (saveFrame() == false)//选择关键帧，若不是关键帧则跳过以下的部分
             return;
-
+        
         // odom factor
         addOdomFactor();
 
         // gps factor
         addGPSFactor();
 
+        // plane factor
+        addPlaneFactor();
+
         // loop factor
         addLoopFactor(); // radius search loop factor (I changed the orignal func name addLoopFactor to addLoopFactor)
 
         // update iSAM
+        std::cout << "first ISAM2 begin" << std::endl;
         isam->update(gtSAMgraph, initialEstimate);
         isam->update();
+        std::cout << "first ISAM2 end" << std::endl;
 
         if (aLoopIsClosed == true)
         {
@@ -2106,11 +2393,13 @@ public:
         initialEstimate.clear();
 
         //save key poses
-        PointType thisPose3D;
+        PointXYZIRT thisPose3D;
         PointTypePose thisPose6D;
         Pose3 latestEstimate;
-
+        
+        std::cout << "isam->calculateEstimate() begin" << std::endl;
         isamCurrentEstimate = isam->calculateEstimate();
+        std::cout << "isam->calculateEstimate() end" << std::endl;
         //新添加关键帧的时间戳
         std::ofstream timeStream (savePCDDirectory + "keyframeTime.txt",  std::ios::app);
         timeStream.setf(std::ios::scientific, std::ios::floatfield);
@@ -2123,16 +2412,31 @@ public:
         timeSIMStream << simTime <<std::endl;
 
         //**********************************************************
+        std::cout << "select data begin" << std::endl;
+        std::cout << "isamCurrentEstimate.size(): " << isamCurrentEstimate.size()  <<std::endl;
+        std::cout << "plane_Index: " << plane_Index  <<std::endl;
+        latestEstimate = isamCurrentEstimate.at<Pose3>(X(isamCurrentEstimate.size()- plane_Index -1));
+        std::cout << "select data end" << std::endl;
 
-        latestEstimate = isamCurrentEstimate.at<Pose3>(isamCurrentEstimate.size()-1);
         // cout << "****************************************************" << endl;
         // isamCurrentEstimate.print("Current estimate: ");
 
         thisPose3D.x = latestEstimate.translation().x();
         thisPose3D.y = latestEstimate.translation().y();
         thisPose3D.z = latestEstimate.translation().z();
-        thisPose3D.intensity = cloudKeyPoses3D->size(); // this can be used as index
+        //这个intensity不是包含的点云的数量，而是数量减1，因为push_back在赋值后面 也就是索引
+        thisPose3D.intensity = cloudKeyPoses3D->size(); // this can be used as index 
+        if(flagForPlaneExtract){
+            std::cout << "dectectPlaneCounts: " << dectectPlaneCounts << std::endl;
+            thisPose3D.ring = cloudKeyPoses3D->size() + dectectPlaneCounts;//有地面点检测的帧在全局的索引 + (有地面点检测的帧在地面帧群中的索引 + 1)(有地面点检测帧的数量) 
+            std::cout << "thisPose3D.intensity: " << thisPose3D.intensity << std::endl;
+            std::cout << "thisPose3D.ring: " << thisPose3D.ring << std::endl;
+        }else{
+            thisPose3D.ring = 0;
+        }
         cloudKeyPoses3D->push_back(thisPose3D);
+        
+        flagForPlaneExtract = false;
 
         thisPose6D.x = thisPose3D.x;
         thisPose6D.y = thisPose3D.y;
@@ -2147,7 +2451,9 @@ public:
         // cout << "****************************************************" << endl;
         // cout << "Pose covariance:" << endl;
         // cout << isam->marginalCovariance(isamCurrentEstimate.size()-1) << endl << endl;
-        poseCovariance = isam->marginalCovariance(isamCurrentEstimate.size()-1);
+        //std::cout << "marginalCovariance begin: " << isamCurrentEstimate.size()  <<std::endl;
+        poseCovariance = isam->marginalCovariance(X(isamCurrentEstimate.size() - plane_Index -1));
+        //std::cout << "marginalCovariance end: " << isamCurrentEstimate.size()  <<std::endl;
 
         // save updated transform
         transformTobeMapped[0] = latestEstimate.rotation().roll();
@@ -2156,6 +2462,7 @@ public:
         transformTobeMapped[3] = latestEstimate.translation().x();
         transformTobeMapped[4] = latestEstimate.translation().y();
         transformTobeMapped[5] = latestEstimate.translation().z();
+
 
         // save all the received edge and surf points
         pcl::PointCloud<PointType>::Ptr thisCornerKeyFrame(new pcl::PointCloud<PointType>());
@@ -2210,10 +2517,12 @@ public:
 
         // save path for visualization
         updatePath(thisPose6D);
+        //std::cout << "updatePath finished" << std::endl;
     }
 
     void correctPoses()
     {
+        //std::cout << "correctPoses begin" << std::endl;
         if (cloudKeyPoses3D->points.empty())
             return;
 
@@ -2221,22 +2530,23 @@ public:
         {
             // clear map cache
             laserCloudMapContainer.clear();
+            laserCloudPlaneMapContainer.clear();
             // clear path
             globalPath.poses.clear();
             // update key poses
-            int numPoses = isamCurrentEstimate.size();
+            int numPoses = isamCurrentEstimate.size() - plane_Index;
             for (int i = 0; i < numPoses; ++i)
             {
-                cloudKeyPoses3D->points[i].x = isamCurrentEstimate.at<Pose3>(i).translation().x();
-                cloudKeyPoses3D->points[i].y = isamCurrentEstimate.at<Pose3>(i).translation().y();
-                cloudKeyPoses3D->points[i].z = isamCurrentEstimate.at<Pose3>(i).translation().z();
+                cloudKeyPoses3D->points[i].x = isamCurrentEstimate.at<Pose3>(X(i)).translation().x();
+                cloudKeyPoses3D->points[i].y = isamCurrentEstimate.at<Pose3>(X(i)).translation().y();
+                cloudKeyPoses3D->points[i].z = isamCurrentEstimate.at<Pose3>(X(i)).translation().z();
 
                 cloudKeyPoses6D->points[i].x = cloudKeyPoses3D->points[i].x;
                 cloudKeyPoses6D->points[i].y = cloudKeyPoses3D->points[i].y;
                 cloudKeyPoses6D->points[i].z = cloudKeyPoses3D->points[i].z;
-                cloudKeyPoses6D->points[i].roll  = isamCurrentEstimate.at<Pose3>(i).rotation().roll();
-                cloudKeyPoses6D->points[i].pitch = isamCurrentEstimate.at<Pose3>(i).rotation().pitch();
-                cloudKeyPoses6D->points[i].yaw   = isamCurrentEstimate.at<Pose3>(i).rotation().yaw();
+                cloudKeyPoses6D->points[i].roll  = isamCurrentEstimate.at<Pose3>(X(i)).rotation().roll();
+                cloudKeyPoses6D->points[i].pitch = isamCurrentEstimate.at<Pose3>(X(i)).rotation().pitch();
+                cloudKeyPoses6D->points[i].yaw   = isamCurrentEstimate.at<Pose3>(X(i)).rotation().yaw();
 
                 updatePath(cloudKeyPoses6D->points[i]);
             }
@@ -2264,6 +2574,7 @@ public:
 
     void publishOdometry()
     {
+        //std::cout << "publishOdometry begin" << std::endl;
         // Publish odometry for ROS (global)
         nav_msgs::Odometry laserOdometryROS;
         laserOdometryROS.header.stamp = timeLaserInfoStamp;
@@ -2343,6 +2654,8 @@ public:
     {
         if (cloudKeyPoses3D->points.empty())
             return;
+        //publish submap plane points
+        publishCloud(&pubRecentPlanePoints, laserCloudPlaneFromMapDS, timeLaserInfoStamp, odometryFrame);
         // publish key poses
         publishCloud(&pubKeyPoses, cloudKeyPoses3D, timeLaserInfoStamp, odometryFrame);
         // Publish surrounding key frames

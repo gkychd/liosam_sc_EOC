@@ -4,7 +4,7 @@ lio_sam:
   pointCloudTopic: "velodyne_points"               # Point cloud data
   imuTopic: "imu/data"                         # IMU data
   odomTopic: "odometry/imu"                   # IMU pre-preintegration odometry, same frequency as IMU
-  gpsTopic: "odometry/gps"                   # GPS odometry topic from navsat, see module_navsat.launch file
+  gpsTopic: "odometry/gpsz"                   # GPS odometry topic from navsat, see module_navsat.launch file
 
   # Frames
   lidarFrame: "base_link"
@@ -74,6 +74,13 @@ lio_sam:
   surroundingkeyframeAddingAngleThreshold: 0.2  # radians, regulate keyframe adding threshold
   surroundingKeyframeDensity: 2.0               # meters, downsample surrounding keyframe poses   
   surroundingKeyframeSearchRadius: 50.0         # meters, within n meters scan-to-map optimization (when loop closure disabled)
+
+  # ground extract
+  groundSubmapLeafSize: 0.1                    # voxel filter params for submapground
+  groundExtractProcessInterval: 1.0           #seconds, ground extracting frequency
+  surroundingKeyframeSearchRadiusForPlane: 20.0 # meters, within n meters extracting for subPlaneMap
+  groundnoiseXY: 0.0001    # noiseXY for ground constraint
+  groundnoiseZ:  0.0001     # noiseZ for ground constraint
 
   # Loop closure
   loopClosureEnableFlag: false

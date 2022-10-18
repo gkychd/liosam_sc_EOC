@@ -9,7 +9,9 @@ Panels:
         - /Mapping1
         - /Mapping1/Path (global)1
         - /Mapping1/Loop constraint1
-        - /Mapping1/Loop constraint1/Status1
+        - /Plane Cloud1
+        - /Plane Cloud1/Current Plane Cloud1
+        - /Plane Cloud1/Submap Plane Cloud1
       Splitter Ratio: 0.47826087474823
     Tree Height: 683
   - Class: rviz/Selection
@@ -455,12 +457,71 @@ Visualization Manager:
           Marker Topic: /lio_sam/mapping/loop_closure_constraints
           Name: Loop constraint
           Namespaces:
-            loop_edges: true
-            loop_nodes: true
+            {}
           Queue Size: 100
           Value: true
       Enabled: true
       Name: Mapping
+    - Class: rviz/Group
+      Displays:
+        - Alpha: 1
+          Autocompute Intensity Bounds: true
+          Autocompute Value Bounds:
+            Max Value: 10
+            Min Value: -10
+            Value: true
+          Axis: Z
+          Channel Name: intensity
+          Class: rviz/PointCloud2
+          Color: 255; 255; 255
+          Color Transformer: Intensity
+          Decay Time: 0
+          Enabled: true
+          Invert Rainbow: false
+          Max Color: 255; 255; 255
+          Min Color: 0; 0; 0
+          Name: Current Plane Cloud
+          Position Transformer: XYZ
+          Queue Size: 10
+          Selectable: true
+          Size (Pixels): 3
+          Size (m): 0.10000000149011612
+          Style: Flat Squares
+          Topic: /EOS_segmted_cloud
+          Unreliable: false
+          Use Fixed Frame: true
+          Use rainbow: true
+          Value: true
+        - Alpha: 1
+          Autocompute Intensity Bounds: true
+          Autocompute Value Bounds:
+            Max Value: 15.552705764770508
+            Min Value: 7.999696731567383
+            Value: true
+          Axis: Z
+          Channel Name: intensity
+          Class: rviz/PointCloud2
+          Color: 255; 255; 255
+          Color Transformer: FlatColor
+          Decay Time: 0
+          Enabled: true
+          Invert Rainbow: false
+          Max Color: 255; 255; 255
+          Min Color: 0; 0; 0
+          Name: Submap Plane Cloud
+          Position Transformer: XYZ
+          Queue Size: 10
+          Selectable: true
+          Size (Pixels): 3
+          Size (m): 0.10000000149011612
+          Style: Flat Squares
+          Topic: /lio_sam/mapping/plane_local
+          Unreliable: false
+          Use Fixed Frame: true
+          Use rainbow: true
+          Value: true
+      Enabled: true
+      Name: Plane Cloud
   Enabled: true
   Global Options:
     Background Color: 0; 0; 0
@@ -477,25 +538,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 269.23193359375
+      Distance: 472.3686218261719
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 49.63373565673828
-        Y: 128.05067443847656
-        Z: 8.353340148925781
+        X: 31.366905212402344
+        Y: 75.57848358154297
+        Z: -22.166746139526367
       Focal Shape Fixed Size: false
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.444796621799469
+      Pitch: 0.22979861497879028
       Target Frame: base_link
       Value: Orbit (rviz)
-      Yaw: 2.300447463989258
+      Yaw: 3.8404369354248047
     Saved: ~
 Window Geometry:
   Displays:

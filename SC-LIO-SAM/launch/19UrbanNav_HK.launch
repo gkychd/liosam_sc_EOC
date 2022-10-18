@@ -5,6 +5,9 @@
     <!-- Parameters -->
     <rosparam file="$(find lio_sam)/config/UrbanNav_HK19.yaml" command="load" />
 
+    <!--- Data Convert -->
+    <node pkg="$(arg project)"  type="$(arg project)_dataConvert"  name="$(arg project)_dataConvert"  output="screen"  respawn="true" />
+
     <!--- LOAM -->
     <include file="$(find lio_sam)/launch/include/module_loam.launch" />
 

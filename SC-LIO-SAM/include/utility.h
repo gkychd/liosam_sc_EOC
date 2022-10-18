@@ -1,5 +1,5 @@
 #pragma once
-
+#define PCL_NO_PRECOMPILE
 #include <ros/ros.h>
 
 #include <std_msgs/Header.h>
@@ -54,7 +54,7 @@
 #include <sstream>
 
 //plane***************************
-//#include "src/efficient_online_segmentation/efficient_online_segmentation.h"
+#include "src/efficient_online_segmentation/efficient_online_segmentation.h"
 //****************************
 
 using namespace std;
@@ -141,7 +141,15 @@ public:
     float surroundingkeyframeAddingAngleThreshold; 
     float surroundingKeyframeDensity;
     float surroundingKeyframeSearchRadius;
-    
+
+    //地面点提取相关 for plane
+    float groundSubmapLeafSize;
+    float groundExtractProcessInterval;
+    float surroundingKeyframeSearchRadiusForPlane;
+    float groundnoiseXY;
+    float groundnoiseZ;
+
+    //****************************************
     // Loop closure
     bool  loopClosureEnableFlag;
     float loopClosureFrequency;
@@ -272,6 +280,12 @@ public:
         nh.param<float>("lio_sam/surroundingkeyframeAddingAngleThreshold", surroundingkeyframeAddingAngleThreshold, 0.2);
         nh.param<float>("lio_sam/surroundingKeyframeDensity", surroundingKeyframeDensity, 1.0);
         nh.param<float>("lio_sam/surroundingKeyframeSearchRadius", surroundingKeyframeSearchRadius, 50.0);
+        //for plane
+        nh.param<float>("lio_sam/groundSubmapLeafSize", groundSubmapLeafSize, 0.2);
+        nh.param<float>("lio_sam/groundExtractProcessInterval", groundExtractProcessInterval, 2.0);
+        nh.param<float>("lio_sam/surroundingKeyframeSearchRadiusForPlane", surroundingKeyframeSearchRadiusForPlane, 20.0);
+        nh.param<float>("lio_sam/groundnoiseXY", groundnoiseXY, 5.0);
+        nh.param<float>("lio_sam/groundnoiseZ", groundnoiseZ, 5.0);
 
         nh.param<bool>("lio_sam/loopClosureEnableFlag", loopClosureEnableFlag, false);
         nh.param<float>("lio_sam/loopClosureFrequency", loopClosureFrequency, 1.0);
@@ -329,6 +343,17 @@ public:
 };
 
 
+sensor_msgs::PointCloud2 publishCloud(ros::Publisher *thisPub, pcl::PointCloud<PointXYZIRT>::Ptr thisCloud, ros::Time thisStamp, std::string thisFrame)
+{
+    sensor_msgs::PointCloud2 tempCloud;
+    pcl::toROSMsg(*thisCloud, tempCloud);
+    tempCloud.header.stamp = thisStamp;
+    tempCloud.header.frame_id = thisFrame;
+    if (thisPub->getNumSubscribers() != 0)
+        thisPub->publish(tempCloud);
+    return tempCloud;
+}
+
 sensor_msgs::PointCloud2 publishCloud(ros::Publisher *thisPub, pcl::PointCloud<PointType>::Ptr thisCloud, ros::Time thisStamp, std::string thisFrame)
 {
     sensor_msgs::PointCloud2 tempCloud;
@@ -378,6 +403,15 @@ void imuRPY2rosRPY(sensor_msgs::Imu *thisImuMsg, T *rosRoll, T *rosPitch, T *ros
     *rosYaw = imuYaw;
 }
 
+float pointDistance(PointXYZIRT p)
+{
+    return sqrt(p.x*p.x + p.y*p.y + p.z*p.z);
+}
+
+float pointDistance(PointXYZIRT p1, PointXYZIRT p2)
+{
+    return sqrt((p1.x-p2.x)*(p1.x-p2.x) + (p1.y-p2.y)*(p1.y-p2.y) + (p1.z-p2.z)*(p1.z-p2.z));
+}
 
 float pointDistance(PointType p)
 {
